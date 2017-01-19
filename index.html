@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <script src="https://d3js.org/d3.v4.min.js"></script>
+    <style>
+        body { margin: 0; position: fixed; top: 0; right: 0; bottom: 0; left: 0; }
+    </style>
+</head>
+<body>
+<script src="webgazer.js"></script>
+<script>
+    var width = innerWidth,
+        height = innerHeight,
+        center = [width/2, height/2],
+        dimX = width/20,
+        dimY = height/10;
+
+    var hallData = [
+        {wall: "top", gradient: ["y1", "y2"], outer: [[0, 0], [width, 0]]},
+        {wall: "right", gradient: ["x2", "x1"], outer: [[width, 0], [width, height]]},
+        {wall: "bottom", gradient: ["y2", "y1"], outer: [[width, height], [0, height]]},
+        {wall: "left", gradient: ["x1", "x2"], outer: [[0, height], [0, 0]]}
+    ];
+  var scaleX = d3.scaleLinear().domain([0,width/4]).range([0,width]);
+  var scaleY = d3.scaleLinear().domain([0, height/4]).range([height, 0]);
+
+    var svg = d3.select("body").append("svg")
+        .style("border", "1px black solid")
+        .attr("width", width)
+        .attr("height", height);
+
+    var gradients = svg.append("defs").selectAll("linearGradient")
+      .data(hallData)
+      .enter().append("linearGradient")
+        .each(function(d) {
+            d3.select(this)
+                .attr("id", "gradient" + d.wall)
+                .attr(d.gradient[0], "0%")
+                .attr(d.gradient[1], "100%")
+        });
+
+    gradients.append("stop")
+        .attr("offset", "0%")
+        .attr("stop-color", "steelblue")
+        .attr("stop-opacity", 1);
+
+    gradients.append("stop")
+        .attr("offset", "90%")
+        .attr("stop-color", "black")
+        .attr("stop-opacity", 1);
+
+    var door = svg.append("polygon")
+        .style("fill", "black");
+
+    var hallway = svg.append("g").selectAll("polygon")
+      .data(hallData)
+      .enter().append("polygon")
+        .style("stroke", "black")
+        .style("fill", function(d) {return "url(#gradient" + d.wall + ")"});
+
+function returnToCenter() {
+    center = [width/2, height/2]
+    updateCenter(500)
+}
+
+    updateCenter();
+
+    function doorFrame() {
+        return [[center[0] - dimX, center[1] - dimY],
+                [center[0] + dimX, center[1] - dimY],
+                [center[0] + dimX, center[1] + dimY],
+                [center[0] - dimX, center[1] + dimY]]
+    };
+
+    function hallPoints(d, i) {
+        return [...d.outer, doorFrame()[(i+1)%4], doorFrame()[i]]
+    };
+
+    function updateCenter(dur = 0) {
+        door.transition().duration(dur)
+            .attr("points", doorFrame)
+
+        hallway.transition().duration(dur)
+            .attr("points", hallPoints)
+    }        
+
+  webgazer.setRegression('ridge')
+      .setTracker('clmtrackr')
+      .begin()
+
+  var setup = function() {
+    var video = document.getElementById('webgazerVideoFeed');
+        video.style.display = 'block';
+        video.style.position = 'absolute';
+        video.width = width/4;
+        video.height = height/4;
+        video.style.top = video.style.left = video.style.margin = 0;
+
+    webgazer.params.imgWidth = width/4;
+    webgazer.params.imgHeight = height/4;
+
+    var overlay = document.createElement('canvas');
+        overlay.id = 'overlay';
+        overlay.style.position = 'absolute';
+        overlay.width = width/4;
+        overlay.height = height/4;
+        overlay.style.top = overlay.style.left = overlay.style.margin = 0;
+
+    document.body.appendChild(overlay);
+
+    var cl = webgazer.getTracker().clm;
+
+    function drawLoop() {
+      requestAnimFrame(drawLoop);
+      overlay.getContext('2d').clearRect(0,0,width,height);
+      if (cl.getCurrentPosition()) {
+        cl.draw(overlay);
+        var coords = cl.getCurrentPosition()
+        var x = d3.mean(coords, function(d) {return d[0]})
+        var y = d3.mean(coords, function(d) {return d[1]})
+        center = [scaleX(x), scaleY(y)];
+        updateCenter();
+      }
+    }
+
+    drawLoop();
+  
+  };
+
+  function checkIfReady() {
+    if (webgazer.isReady()) {
+      setup();
+    } else {
+      d3.timeout(checkIfReady, 100);
+    }
+  }
+
+  d3.timeout(checkIfReady,100);
+
+  window.onbeforeunload = function() {
+    window.localStorage.clear();
+  }
+</script>
+</body>
+</html>
