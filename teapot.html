@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+
+.polygon {
+  fill: none;
+  stroke: #000;
+}
+
+</style>
+<body>
+</body>
+
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="obj_parse.js"></script>
+<script src="webgazer.js"></script>
+
+<script>
+
+var width = innerWidth,
+    height = innerHeight,
+    margin = 20,
+    cameraSize = 3;
+
+var surfaces;
+
+var mouse_pan_x = 0,
+    mouse_pan_y = 0,
+    mouse_rot_x = 0,
+    mouse_rot_y = 0,
+    prev_mouse_x = 0,
+    prev_mouse_y = 0
+    prev_scale = 1;
+          
+var square_length = d3.min([width,height]) - 2 * margin;
+
+var x_scale = d3.scaleLinear()
+    .range([width/2 - square_length/2, width/2 + square_length/2]);
+
+var y_scale = d3.scaleLinear()
+    .range([height/2 + square_length/2, height/2 - square_length/2]);
+
+var rScaleX = d3.scaleLinear().domain([width/cameraSize, 0]).range([1500, -1500])
+var rScaleY = d3.scaleLinear().domain([height/cameraSize, 0]).range([-1000, 1000])
+
+var camera = {inclination: Math.PI/2, azimuth: 0, center: {x:0, y:0, z:0}};
+
+var svg = d3.select("body").append("svg")
+    .attr("width", width)
+    .attr("height", height);
+
+var container = svg.append("g")
+    .attr("transform", "translate(" + 0 + ", " + 0 + ")");
+  
+d3.text("teapot.obj", function(error, obj_file_text) {
+  if (error) throw error;
+  
+  var obj = parse_obj_text(obj_file_text);
+  surfaces = obj.surfaces;
+  var extreme = d3.max([Math.abs(obj.extents[0]),Math.abs(obj.extents[1])]);
+  camera.center = obj.center;
+  x_scale.domain([-extreme, extreme]);
+  y_scale.domain([-extreme, extreme]);
+  
+  update(surfaces, camera)
+});
+
+webgazer.setRegression('ridge')
+    .setTracker('clmtrackr')
+    .begin()
+
+d3.timeout(checkIfReady,100);
+
+function setup() {
+  var video = document.getElementById('webgazerVideoFeed');
+  video.style.display = 'block';
+  video.style.position = 'absolute';
+  video.width = width/cameraSize;
+  video.height = height/cameraSize;
+  video.style.top = video.style.left = video.style.margin = 0;
+
+
+  webgazer.params.imgWidth = width/cameraSize;
+  webgazer.params.imgHeight = height/cameraSize;
+
+  var overlay = document.createElement('canvas');
+  overlay.id = 'overlay';
+  overlay.style.position = 'absolute';
+  overlay.width = width/cameraSize;
+  overlay.height = height/cameraSize;
+  overlay.style.top = overlay.style.left = overlay.style.margin = 0;
+
+  document.body.appendChild(overlay);
+
+  var cl = webgazer.getTracker().clm;
+
+  function drawLoop() {
+    requestAnimFrame(drawLoop);
+    overlay.getContext('2d').clearRect(0,0,width,height);
+    if (cl.getCurrentPosition()) {
+      cl.draw(overlay);
+      var coords = cl.getCurrentPosition()
+      var x = d3.mean(coords, function(d) {return d[0]})
+      var y = d3.mean(coords, function(d) {return d[1]})
+      center = [rScaleX(x), rScaleY(y)];
+      rotate(center)
+    }
+  }
+
+  drawLoop();
+  
+};
+
+function translate_pt(pt, center) {
+  return {x: pt.x - center.x, 
+          y: pt.y - center.y,
+          z: pt.z - center.z};
+}
+
+function rotate_pt(pt, camera) {
+  // first rotate around y-axis to the azimuth angle
+  var xp2 = pt.x * Math.cos(camera.azimuth) - pt.z * Math.sin(camera.azimuth);
+  var zp2 = pt.x * Math.sin(camera.azimuth) + pt.z * Math.cos(camera.azimuth);
+
+  // then around the x axis to pi/2 minus the inclination angle
+  var a = Math.PI/2 - camera.inclination;
+  var zp3 = zp2 * Math.cos(a) - pt.y * Math.sin(a);
+  var yp3 = zp2 * Math.sin(a) + pt.y * Math.cos(a);
+
+  return {x: xp2, y: yp3, z: zp3};
+}
+
+function project_orthographic(surfaces, camera) {
+  for (points of surfaces) {
+    for (point of points) {
+      var point_t = translate_pt(point, camera.center);
+      var point_r = rotate_pt(point_t, camera);
+            
+      point.px = point_r.x;
+      point.py = point_r.y;
+      point.pz = point_r.z;
+      
+    }
+  }
+  return surfaces;
+}
+
+function draw(surfaces) {
+
+  var polygons = container.selectAll(".polygon")
+      .data(surfaces);
+
+  polygons.enter().append("path")
+      .attr("class", "polygon");
+      
+  polygons
+      .attr("d", function(datum) { 
+        var d = datum.map(function(point){ 
+            return [x_scale(point.px), y_scale(point.py)]; 
+        });
+        return "M" + d.join("L") + "Z"; 
+      })
+}
+
+function update(surfaces, camera) {
+  surfaces = project_orthographic(surfaces, camera);
+  draw(surfaces);
+}
+
+function rotate(input) {
+
+  var delta_x = input[0] - prev_mouse_x,
+      delta_y = input[1] - prev_mouse_y;
+
+  prev_mouse_x = input[0];
+  prev_mouse_y = input[1];
+
+  mouse_rot_x += delta_x;
+  mouse_rot_y += delta_y;
+  camera.inclination = Math.PI/2 + mouse_rot_y / 500; 
+  camera.azimuth = -1 * mouse_rot_x / 500;
+  
+  update(surfaces, camera);
+  
+}
+
+function checkIfReady() {
+  if (webgazer.isReady()) {
+    setup();
+  } else {
+    d3.timeout(checkIfReady, 100);
+  }
+}
+
+window.onbeforeunload = function() {
+  window.localStorage.clear();
+}
+</script>
